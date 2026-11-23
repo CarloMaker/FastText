@@ -34,7 +34,7 @@ from ftcore import (
     APP_NAME, APP_VERSION, MAX_IMG_WIDTH, OBJ, Img, ImageStore, doc_to_model, insert_model, line_is_empty,
     line_plain, load_any, make_table_format, model_has_rich, model_image_names, model_to_plain, qimage_to_bytes,
     save_docx, save_ftx, char_format_at, heading_block_format, heading_char_format, rule_block_format,
-    is_rule_format, HEADING_KINDS,
+    is_rule_format, HEADING_KINDS, is_dark,
 )
 from ftpanels import SidePanel
 import fttextops as ops
@@ -70,13 +70,15 @@ class Editor(QTextEdit):
         self.cursorPositionChanged.connect(self.refresh_extra)
 
     # ---- evidenziazioni -----------------------------------------------
-    def _sel(self, s, e, color, full=False):
+    def _sel(self, s, e, color, full=False, fg=None):
         sel = QTextEdit.ExtraSelection()
         c = QTextCursor(self.document())
         c.setPosition(s)
         c.setPosition(e, QTextCursor.KeepAnchor)
         sel.cursor = c
         sel.format.setBackground(QColor(color))
+        if fg:
+            sel.format.setForeground(QColor(fg))
         if full:
             sel.format.setProperty(QTextFormat.FullWidthSelection, True)
         return sel
@@ -86,7 +88,7 @@ class Editor(QTextEdit):
         if self.highlight_line and not self.textCursor().hasSelection():
             c = self.textCursor()
             line = QTextEdit.ExtraSelection()
-            line.format.setBackground(QColor("#eef4fc"))
+            line.format.setBackground(QColor("#2a3442" if is_dark() else "#eef4fc"))
             line.format.setProperty(QTextFormat.FullWidthSelection, True)
             c.clearSelection()
             line.cursor = c
@@ -94,7 +96,7 @@ class Editor(QTextEdit):
         self.setExtraSelections(sels + self.smart + self.marks)
 
     def set_marks(self, spans):
-        self.marks = [self._sel(s, e, "#ffe36e") for s, e in spans]
+        self.marks = [self._sel(s, e, "#ffe36e", fg="#000000") for s, e in spans]
         self.refresh_extra()
 
     def clear_marks(self):
@@ -110,7 +112,8 @@ class Editor(QTextEdit):
             pat = compile_pattern(Opts(word, case=True, word=True))
             ms = find_matches(self.document(), pat)
             if len(ms) > 1:
-                self.smart = [self._sel(m.start(), m.end(), "#c8f0c0") for m in ms[:2000]
+                col = "#3b6b34" if is_dark() else "#c8f0c0"
+                self.smart = [self._sel(m.start(), m.end(), col) for m in ms[:2000]
                               if not (m.start() == c.selectionStart() and m.end() == c.selectionEnd())]
         self.refresh_extra()
 
@@ -827,6 +830,16 @@ class MainWindow(QMainWindow):
             a.setCheckable(True)
             a.setChecked(v)
         self.act(m, "Font...", self.choose_font)
+        tm_ = m.addMenu("Tema")
+        self.theme_actions = {}
+        from PySide6.QtGui import QActionGroup
+        grp = QActionGroup(self)
+        for key, label in (("auto", "Automatico (come Windows)"), ("light", "Chiaro"), ("dark", "Scuro")):
+            a = tm_.addAction(label, lambda k=key: self.set_theme(k))
+            a.setCheckable(True)
+            a.setChecked(self.settings.value("theme", "light") == key)
+            grp.addAction(a)
+            self.theme_actions[key] = a
         m.addSeparator()
         self.act(m, "Zoom avanti", lambda: self.zoom(1), ["Ctrl++", "Ctrl+="])
         self.act(m, "Zoom indietro", lambda: self.zoom(-1), "Ctrl+-")
@@ -921,12 +934,32 @@ class MainWindow(QMainWindow):
         opt.setFlags(flags)
         ed.document().setDefaultTextOption(opt)
         ed.highlight_line = self.hl_line
+        pal = ed.palette()
+        from PySide6.QtGui import QPalette
+        pal.setColor(QPalette.Dark, QColor("#8c8c8c"))     # colore delle linee di separazione
+        ed.setPalette(pal)
         ed.refresh_extra()
 
     def restyle_all(self):
         for t in self.all_tabs():
             self.style_editor(t.editor)
         self.results.set_font(QFont(self.base_font.family(), 10))
+
+    def set_theme(self, key):
+        self.settings.setValue("theme", key)
+        apply_theme(QApplication.instance(), key)
+        QTimer.singleShot(50, self.after_theme_change)
+
+    def after_theme_change(self):
+        self.restyle_all()
+        for t in self.all_tabs():
+            t.editor._update_smart()
+        self.side.refresh_files()
+
+    def changeEvent(self, e):
+        if e.type() in (QEvent.PaletteChange, QEvent.ApplicationPaletteChange, QEvent.ThemeChange):
+            QTimer.singleShot(50, self.after_theme_change)
+        super().changeEvent(e)
 
     def toggle_view(self, what):
         val = not getattr(self, what)
@@ -1322,7 +1355,9 @@ class MainWindow(QMainWindow):
         c.beginEditBlock()
         c.clearSelection()
         bf = c.blockFormat()
-        if not c.block().text() and bf.headingLevel() == 0 and not is_rule_format(bf):
+        prev = c.block().previous()
+        after_table = prev.isValid() and QTextCursor(prev).currentTable() is not None
+        if not c.block().text() and bf.headingLevel() == 0 and not is_rule_format(bf) and not after_table:
             c.setBlockFormat(rule_block_format())
         else:
             c.movePosition(QTextCursor.EndOfBlock)
@@ -1404,6 +1439,38 @@ class MainWindow(QMainWindow):
 #  Avvio (una sola finestra: i file aperti dopo vanno in nuove schede)
 # ---------------------------------------------------------------------------
 
+def _dark_palette():
+    from PySide6.QtGui import QPalette
+    p = QPalette()
+    c = {QPalette.Window: "#2b2b2b", QPalette.WindowText: "#e6e6e6", QPalette.Base: "#1f1f1f",
+         QPalette.AlternateBase: "#2b2b2b", QPalette.ToolTipBase: "#3a3a3a", QPalette.ToolTipText: "#e6e6e6",
+         QPalette.Text: "#e6e6e6", QPalette.Button: "#333333", QPalette.ButtonText: "#e6e6e6",
+         QPalette.BrightText: "#ff5555", QPalette.Highlight: "#2f65ca", QPalette.HighlightedText: "#ffffff",
+         QPalette.Link: "#7fb2ff", QPalette.PlaceholderText: "#8a8a8a"}
+    for role, col in c.items():
+        p.setColor(role, QColor(col))
+    for role in (QPalette.Text, QPalette.ButtonText, QPalette.WindowText):
+        p.setColor(QPalette.Disabled, role, QColor("#7a7a7a"))
+    return p
+
+
+def apply_theme(app, key):
+    """auto = segue Windows; light/dark = forzato."""
+    hints = app.styleHints()
+    if hasattr(hints, "setColorScheme"):            # Qt 6.8 e successivi
+        scheme = {"light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}.get(key, Qt.ColorScheme.Unknown)
+        if key == "auto" and hasattr(hints, "unsetColorScheme"):
+            hints.unsetColorScheme()
+        else:
+            hints.setColorScheme(scheme)
+        return
+    # versioni vecchie di Qt: stile Fusion con tavolozza chiara o scura
+    if key == "auto":
+        return
+    app.setStyle("Fusion")
+    app.setPalette(_dark_palette() if key == "dark" else app.style().standardPalette())
+
+
 def send_to_running(paths):
     sock = QLocalSocket()
     sock.connectToServer(SERVER_NAME)
@@ -1460,6 +1527,7 @@ def main():
         except Exception:
             pass
     app.setWindowIcon(make_icon())
+    apply_theme(app, QSettings("FastText", "FastText").value("theme", "light"))
     w = MainWindow()
     w._server = start_server(w)
     if w.settings.value("restore_session", True, type=bool):

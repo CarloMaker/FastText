@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget, QButtonGroup, QSizePolicy,
 )
 
-from ftcore import OBJ, ImageStore, text_format, build_headless, doc_to_model, load_any, model_to_plain, save_ftx
+from ftcore import OBJ, ImageStore, text_format, is_dark, build_headless, doc_to_model, load_any, model_to_plain, save_ftx
 
 FRAME_CHARS = "\ufdd0\ufdd1"
 _TRANS = {ord(c): "\n" for c in "\u2029\u2028\ufdd0\ufdd1"}
@@ -164,7 +164,7 @@ def hit_html(text, col, ln):
     end = min(len(text), col + ln + 120)
     pre, mid, post = text[start:col], text[col:col + ln], text[col + ln:end]
     f = lambda s: html.escape(s.replace(OBJ, "▣"))
-    return (("…" if start else "") + f(pre) + '<span style="background:#ffe36e;font-weight:bold">'
+    return (("…" if start else "") + f(pre) + '<span style="background:#ffe36e;color:#000000;font-weight:bold">'
             + f(mid) + "</span>" + f(post) + ("…" if end < len(text) else ""))
 
 
@@ -255,7 +255,7 @@ class ResultsDock(QDockWidget):
                 h = dict(h, path=path, tab=tab)
                 it = QTreeWidgetItem([f"Riga {h['line'] + 1}: {h['text']}"])
                 it.setData(0, HIT_ROLE, h)
-                it.setData(0, HTML_ROLE, f'<span style="color:#2b6cb0">Riga {h["line"] + 1}:</span>&nbsp; '
+                it.setData(0, HTML_ROLE, f'<span style="color:{"#7fb2ff" if is_dark() else "#2b6cb0"}">Riga {h["line"] + 1}:</span>&nbsp; '
                                          + hit_html(h["text"], h["col"], h["len"]))
                 g.addChild(it)
             g.setExpanded(True)
@@ -375,7 +375,7 @@ class SearchDialog(QDialog):
         top.addLayout(left, 1)
         top.addLayout(right)
         self.status = QLabel(" ")
-        self.status.setStyleSheet("color:#2b6cb0")
+        self.status.setStyleSheet("font-weight:bold")
         main = QVBoxLayout(self)
         main.addLayout(top)
         main.addWidget(self.status)

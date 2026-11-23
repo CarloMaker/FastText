@@ -18,7 +18,7 @@ BLOCK_ROLE = Qt.UserRole + 1
 
 def _section_label(text):
     lab = QLabel(text)
-    lab.setStyleSheet("font-weight:bold; padding:4px 4px 2px 4px; color:#3a4a5c")
+    lab.setStyleSheet("font-weight:bold; padding:4px 4px 2px 4px;")
     return lab
 
 

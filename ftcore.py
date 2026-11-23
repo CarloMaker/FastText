@@ -26,7 +26,7 @@ from PySide6.QtGui import (
 )
 
 APP_NAME = "FastText"
-APP_VERSION = "1.2"
+APP_VERSION = "1.2.1"
 FORMAT_VERSION = 1
 MAX_IMG_WIDTH = 700          # larghezza massima con cui una nuova immagine appare nel testo
 OBJ = "￼"               # carattere segnaposto che Qt usa per le immagini
@@ -790,6 +790,12 @@ def is_rule_format(bf):
     return bf.hasProperty(QTextFormat.BlockTrailingHorizontalRulerWidth)
 
 
+def is_dark():
+    """True se l'interfaccia usa un tema scuro (Windows in modalità scura o tema scelto)."""
+    from PySide6.QtGui import QGuiApplication, QPalette
+    return QGuiApplication.palette().color(QPalette.Base).lightness() < 128
+
+
 def char_format_at(cursor):
     """Formato giusto per scrivere testo nuovo nel blocco del cursore."""
     lvl = cursor.blockFormat().headingLevel()
@@ -850,6 +856,9 @@ def insert_model(cursor, model, insert_image):
             put_line(cursor, data)
             need_block = True
         elif kind == "hr":
+            # Qt disegna male una linea messa subito dopo una tabella: lascia la riga vuota in mezzo
+            if not need_block and QTextCursor(cursor.block().previous()).currentTable() is not None:
+                need_block = True
             start_block(rule_block_format(), QTextCharFormat())
             need_block = True
         else:
