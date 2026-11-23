@@ -26,7 +26,7 @@ from PySide6.QtGui import (
 )
 
 APP_NAME = "FastText"
-APP_VERSION = "1.2.1"
+APP_VERSION = '1.4'
 FORMAT_VERSION = 1
 MAX_IMG_WIDTH = 700          # larghezza massima con cui una nuova immagine appare nel testo
 OBJ = "￼"               # carattere segnaposto che Qt usa per le immagini
