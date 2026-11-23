@@ -3,6 +3,10 @@
 Un Blocco note per Windows con **tabelle**, **immagini** e **schede**, in stile Notepad++.
 Un solo font, nessuna formattazione: solo testo, intestazioni, tabelle e immagini.
 
+## Download
+L'ultima versione pronta da usare (senza installare Python) è nelle
+[Releases](https://github.com/CarloMaker/FastText/releases): scarica lo zip, estrailo e avvia `FastText.exe`.
+
 ## Funzioni
 - Schede multiple, pannello laterale con l'elenco dei file aperti e la struttura del documento
 - Intestazioni (Ctrl+1/2/3) e linee di separazione
@@ -15,7 +19,7 @@ Un solo font, nessuna formattazione: solo testo, intestazioni, tabelle e immagin
 Un file ZIP con `content.md` (Markdown: `#` titoli, `|` tabelle, `![](images/...)` immagini, `---` linee)
 e la cartella `images/`.
 
-## Avvio
+## Avvio dal codice sorgente
 1. `installa.bat` (una volta: installa PySide6, python-docx, pillow)
 2. `FastText.bat`
 3. facoltativo: `crea_exe.bat` (crea `dist\FastText\FastText.exe`) e `associa_ftx.bat`
@@ -30,3 +34,10 @@ Dettagli e scorciatoie in [LEGGIMI.txt](LEGGIMI.txt).
 | `ftsearch.py` | ricerca e sostituzione |
 | `fttextops.py` | maiuscole/minuscole e operazioni sulle righe |
 | `ftpanels.py` | pannello laterale (file aperti, struttura) |
+
+## Pubblicare una nuova versione
+```
+git tag v1.3
+git push origin v1.3
+```
+GitHub Actions crea l'exe su Windows e lo allega a una nuova Release (vedi `.github/workflows/release.yml`).
