@@ -1,0 +1,85 @@
+FastText 1.2 - un Blocco note con tabelle, immagini e schede
+============================================================
+
+Primo avvio
+  1. Doppio clic su  installa.bat   (una volta sola: installa le librerie)
+  2. Doppio clic su  FastText.bat   (avvia il programma)
+  Facoltativo:
+  - crea_exe.bat     crea dist\FastText\FastText.exe (poi Python non serve piu')
+  - associa_ftx.bat  i .ftx si aprono con doppio clic; sui .docx/.txt/.md
+                     compare "Apri con FastText" nel tasto destro
+  NB: se avevi gia' creato l'exe, rilancia crea_exe.bat per avere la nuova versione.
+
+Schede (come Notepad++)
+  Ctrl+N nuova scheda, Ctrl+O apri (anche piu' file insieme)
+  Ctrl+W chiudi scheda, Ctrl+Shift+T riapri l'ultima chiusa
+  Ctrl+Tab / Ctrl+Shift+Tab  scheda successiva / precedente
+  Clic centrale su una scheda = chiudi; doppio clic nella barra vuota = nuova scheda
+  Tasto destro su una scheda: chiudi gli altri / a destra / tutti, copia percorso,
+    apri cartella, ricarica dal disco
+  Le schede si trascinano per riordinarle. Il pallino ● = modifiche non salvate.
+  Ctrl+S salva, Ctrl+Alt+S salva con nome, Ctrl+Shift+S salva tutto
+  Alla riapertura del programma tornano i file che avevi aperti.
+  Se FastText e' gia' aperto, i file aperti con doppio clic arrivano in una nuova scheda.
+
+Pannello a sinistra (F8 per mostrarlo/nasconderlo)
+  File aperti: elenco di tutte le schede (nome e cartella), con casella per filtrare.
+    Clic = vai al file, clic centrale = chiudi, tasto destro = stesso menu delle schede.
+  Struttura del documento: le intestazioni del file corrente; clic per saltarci.
+
+Intestazioni (menu Inserisci > Intestazione, o pulsante "Intestazione")
+  Ctrl+1 Titolo 1 (grande), Ctrl+2 Titolo 2, Ctrl+3 Titolo 3
+  Premendo di nuovo lo stesso tasto la riga torna testo normale.
+  Stesso font del testo, solo in grassetto e piu' grande. Invio a fine titolo = testo normale.
+  Ctrl+Shift+R  linea di separazione orizzontale tra due paragrafi.
+  Nel file .ftx sono salvate come in Markdown:  # Titolo, ## Titolo, ### Titolo, ---
+  Dai file Word i titoli (Titolo 1/2/3) vengono riconosciuti e mantenuti.
+
+Ricerca (menu Cerca)
+  Ctrl+F trova, Ctrl+H sostituisci, Ctrl+Shift+F trova nei file
+  F3 / Shift+F3  successivo / precedente,  Ctrl+F3 cerca la parola sotto il cursore
+  Ctrl+G vai alla riga, F7 mostra/nasconde i risultati
+  Opzioni: parole intere, maiuscole/minuscole, ricomincia dall'inizio, solo nella selezione
+  Modalita':
+    Normale
+    Estesa        \n = a capo, \t = tab, \x41, è ...
+    Espressione regolare  (sintassi Python; nella sostituzione $1 o \1 = gruppo 1)
+  Trova tutti nel documento / nei tab aperti / nei file di una cartella:
+    i risultati compaiono in basso; doppio clic su un risultato per andarci.
+  Evidenzia tutti: colora tutte le occorrenze (Esc per togliere).
+  Doppio clic su una parola: si colorano in verde le altre uguali.
+  Sostituisci nei file: solo .ftx e .txt (i .docx non vengono toccati);
+    chiede conferma e non si puo' annullare.
+
+Testo (menu Modifica, anche dal tasto destro)
+  Maiuscole/minuscole (sulla selezione, o sulla parola sotto il cursore):
+    Ctrl+Shift+U MAIUSCOLO     Ctrl+U minuscolo
+    Alt+U Iniziali Maiuscole   Alt+Shift+U Iniziali (mantieni il resto)
+    Ctrl+Alt+U Prima lettera della frase
+    Ctrl+Alt+I iNVERTI         Ctrl+Alt+R cAsUaLe
+  Operazioni sulle righe:
+    Ctrl+D duplica, Ctrl+Shift+L elimina, Ctrl+Shift+Su/Giu' sposta, Ctrl+J unisci
+    Ordina A-Z / Z-A (ordine "naturale": 9 prima di 10), inverti ordine,
+    rimuovi duplicati, rimuovi righe vuote, togli spazi, tab -> spazi
+    Senza selezione lavorano su tutto il testo fino alla prima tabella
+    (o su tutta la cella, se sei in una tabella). Le immagini restano al loro posto.
+  F5 data/ora. Visualizza > Statistiche: righe, parole, caratteri.
+
+Tabelle e immagini
+  Ctrl+V          incolla testo, screenshot, immagini, tabelle da Excel/Word/web
+                  (la formattazione viene sempre tolta)
+  Ctrl+Shift+V    incolla solo testo
+  Ctrl+T          inserisci tabella; Tab/Maiusc+Tab tra le celle; Ctrl+Invio riga sotto
+  Tasto destro    su tabella: righe/colonne; su immagine: dimensione, salva, apri
+
+Visualizza
+  A capo automatico, mostra spazi e tabulazioni, evidenzia riga corrente,
+  Font (unico per tutto), zoom con Ctrl+rotella o Ctrl +/-.
+
+File
+  .ftx   formato di FastText: un ZIP con content.md (il testo, tabelle con | ... |)
+         e la cartella images. Senza FastText: rinominalo .zip e apri content.md.
+  .docx  Word in vista semplificata. Salvando chiede se creare un .ftx (consigliato)
+         o sovrascrivere il .docx perdendo la formattazione originale.
+  .txt   come nel Blocco note.
+  File > Esporta in Word / PDF / Stampa.
