@@ -26,7 +26,7 @@ from PySide6.QtGui import (
 )
 
 APP_NAME = "FastText"
-APP_VERSION = '1.4'
+APP_VERSION = '1.41'
 FORMAT_VERSION = 1
 MAX_IMG_WIDTH = 700          # larghezza massima con cui una nuova immagine appare nel testo
 OBJ = "￼"               # carattere segnaposto che Qt usa per le immagini
@@ -55,6 +55,27 @@ class Img:
 
     def __repr__(self):
         return f"Img({self.name!r}, {self.width})"
+
+
+class TableRows(list):
+    """Righe di una tabella + larghezze delle colonne (in % della pagina) oppure None = automatiche."""
+
+    def __init__(self, rows=(), widths=None):
+        super().__init__(rows)
+        self.widths = list(widths) if widths else None
+
+
+def normalize_widths(widths, ncols):
+    """Larghezze valide (interi, somma <= 100) oppure None."""
+    if not widths or len(widths) != ncols:
+        return None
+    w = [max(0.0, float(x)) for x in widths]
+    tot = sum(w)
+    if tot <= 0:
+        return None
+    if tot > 100:
+        w = [x * 100.0 / tot for x in w]
+    return [max(2, int(round(x))) for x in w]
 
 
 def line_is_empty(line):
@@ -206,6 +227,9 @@ def model_to_md(model):
             lines.append("---")
         else:
             ncols = max(len(r) for r in data) if data else 1
+            widths = normalize_widths(getattr(data, "widths", None), ncols)
+            if widths:
+                lines.append("<!-- ftx-larghezze: " + " ".join(str(w) for w in widths) + " -->")
             for ri, row in enumerate(data):
                 cells = []
                 for ci in range(ncols):
@@ -249,6 +273,7 @@ def _split_row(line):
 
 
 _SEP_CELL = re.compile(r"^:?-{3,}:?$")
+_WIDTHS_RE = re.compile(r"^<!--\s*ftx-larghezze:\s*([\d.\s]+?)\s*-->\s*$")
 _HR_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
 _HEAD_RE = re.compile(r"^(#{1,3})(?: (.*))?$")
 HEADING_KINDS = ("h1", "h2", "h3")
@@ -261,8 +286,14 @@ def md_to_model(text):
     src = text.split("\n")
     model = []
     i = 0
+    widths = None
     while i < len(src):
         ln = src[i]
+        wm = _WIDTHS_RE.match(ln)
+        if wm and i + 1 < len(src) and src[i + 1].startswith("|"):
+            widths = [float(x) for x in wm.group(1).split()]
+            i += 1
+            continue
         if ln.startswith("|"):
             rows = []
             while i < len(src) and src[i].startswith("|"):
@@ -274,7 +305,8 @@ def md_to_model(text):
             for r in rows:
                 while len(r) < ncols:
                     r.append([[""]])
-            model.append(("t", rows))
+            model.append(("t", TableRows(rows, normalize_widths(widths, ncols))))
+            widths = None
             continue
         if ln[:1] == "\\" and ln[1:2] in ("|", "\\", "#", "-", "*", "_"):
             model.append(("p", _md_inline(ln[1:])))
@@ -488,7 +520,16 @@ def load_docx(path, store):
         for r in rows:
             while len(r) < ncols:
                 r.append([[""]])
-        return rows or [[[[""]]]]
+        widths = None
+        grid = tbl_el.find(qn("w:tblGrid"))
+        if grid is not None and text_width_twips:
+            try:
+                cols = [int(g.get(qn("w:w"))) for g in grid.findall(qn("w:gridCol"))]
+                if len(cols) == ncols and all(c > 0 for c in cols):
+                    widths = normalize_widths([c * 100.0 / text_width_twips for c in cols], ncols)
+            except (TypeError, ValueError):
+                widths = None
+        return TableRows(rows or [[[[""]]]], widths)
 
     def cell_lines(tc):
         out = []
@@ -504,6 +545,12 @@ def load_docx(path, store):
                     out.extend(cell_lines(c))
         return out or [[""]]
 
+    text_width_twips = 0
+    try:
+        sec = doc.sections[0]
+        text_width_twips = (sec.page_width - sec.left_margin - sec.right_margin) / 635
+    except Exception:
+        pass
     model = []
     style_names = {}
     for st in doc.styles:
@@ -640,6 +687,16 @@ def save_docx(path, model, store, font):
             ncols = max(len(r) for r in data)
             t = d.add_table(rows=len(data), cols=ncols)
             t.style = "Table Grid"
+            widths = normalize_widths(getattr(data, "widths", None), ncols)
+            if widths:
+                sec = d.sections[0]
+                avail = sec.page_width - sec.left_margin - sec.right_margin
+                t.autofit = False
+                for ci, w in enumerate(widths):
+                    emu = int(avail * w / 100)
+                    t.columns[ci].width = emu
+                    for cell in t.columns[ci].cells:
+                        cell.width = emu
             for ri, row in enumerate(data):
                 for ci, cell in enumerate(row):
                     c = t.cell(ri, ci)
@@ -725,7 +782,7 @@ def _table_rows(tbl, resolve):
             else:
                 row.append(_iter_lines(cell.begin(), resolve) or [[""]])
         rows.append(row)
-    return rows
+    return TableRows(rows, table_widths(tbl))
 
 
 def doc_to_model(doc, resolve):
@@ -810,6 +867,35 @@ def text_format(cursor):
     return f
 
 
+def table_widths(tbl):
+    """Larghezze delle colonne di una QTextTable in % della pagina, oppure None se automatiche."""
+    tf = tbl.format()
+    cons = tf.columnWidthConstraints()
+    n = tbl.columns()
+    if not cons or len(cons) != n:
+        return None
+    if any(c.type() == QTextLength.VariableLength for c in cons):
+        return None
+    vals = [c.rawValue() for c in cons]
+    tot = sum(vals) or 1.0
+    tw = tf.width()
+    total = tw.rawValue() if tw.type() == QTextLength.PercentageLength else 100.0
+    return normalize_widths([v / tot * total for v in vals], n)
+
+
+def apply_table_widths(tf, widths, ncols):
+    """Imposta sul formato tabella le larghezze (in % della pagina); None = predefinite."""
+    widths = normalize_widths(widths, ncols)
+    if not widths:
+        tf.setWidth(QTextLength(QTextLength.PercentageLength, 100))
+        tf.clearColumnWidthConstraints()
+        return tf
+    tot = sum(widths)
+    tf.setWidth(QTextLength(QTextLength.PercentageLength, min(100, tot)))
+    tf.setColumnWidthConstraints([QTextLength(QTextLength.PercentageLength, w * 100.0 / tot) for w in widths])
+    return tf
+
+
 def make_table_format():
     tf = QTextTableFormat()
     tf.setBorder(1)
@@ -864,7 +950,8 @@ def insert_model(cursor, model, insert_image):
         else:
             rows = len(data)
             cols = max(len(r) for r in data) if data else 1
-            tbl = cursor.insertTable(max(1, rows), max(1, cols), make_table_format())
+            tf = apply_table_widths(make_table_format(), getattr(data, "widths", None), max(1, cols))
+            tbl = cursor.insertTable(max(1, rows), max(1, cols), tf)
             for ri, row in enumerate(data):
                 for ci, cell in enumerate(row):
                     cc = tbl.cellAt(ri, ci).firstCursorPosition()

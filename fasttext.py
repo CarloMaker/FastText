@@ -18,10 +18,11 @@ import sys
 import tempfile
 import urllib.request
 
-from PySide6.QtCore import Qt, QUrl, QSettings, QDateTime, QMimeData, Signal, QSize, QRectF, QTimer, QEvent, QByteArray
+from PySide6.QtCore import Qt, QUrl, QSettings, QDateTime, QMimeData, Signal, QSize, QRectF, QPointF, QTimer, QEvent, QByteArray
 from PySide6.QtGui import (
     QTextBlockFormat, QAction, QColor, QFont, QFontDatabase, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap,
     QTextCharFormat, QTextCursor, QTextDocument, QTextFormat, QTextImageFormat, QDesktopServices, QTextOption,
+    QTextTable, QTextLength, QBrush,
 )
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
@@ -34,7 +35,7 @@ from ftcore import (
     APP_NAME, APP_VERSION, MAX_IMG_WIDTH, OBJ, Img, ImageStore, doc_to_model, insert_model, line_is_empty,
     line_plain, load_any, make_table_format, model_has_rich, model_image_names, model_to_plain, qimage_to_bytes,
     save_docx, save_ftx, char_format_at, heading_block_format, heading_char_format, rule_block_format,
-    is_rule_format, HEADING_KINDS, is_dark,
+    is_rule_format, HEADING_KINDS, is_dark, table_widths, apply_table_widths,
 )
 from ftpanels import SidePanel
 import fttextops as ops
@@ -68,6 +69,9 @@ class Editor(QTextEdit):
         self._smart_timer.timeout.connect(self._update_smart)
         self.selectionChanged.connect(self._smart_timer.start)
         self.cursorPositionChanged.connect(self.refresh_extra)
+        self._img_sel = None          # cursore sull'immagine selezionata (per ridimensionarla)
+        self._drag = None             # trascinamento in corso: immagine, colonna o bordo tabella
+        self.viewport().setMouseTracking(True)
 
     # ---- evidenziazioni -----------------------------------------------
     def _sel(self, s, e, color, full=False, fg=None):
@@ -300,6 +304,26 @@ class Editor(QTextEdit):
         return super().event(e)
 
     def keyPressEvent(self, e):
+        if self._img_sel is not None:
+            p = self._img_sel.position()
+            self._img_sel = None
+            self.viewport().update()
+            if self._image_fmt(p) is not None:
+                c = QTextCursor(self.document())
+                c.setPosition(p)
+                c.setPosition(p + 1, QTextCursor.KeepAnchor)
+                if e.matches(QKeySequence.Copy) or e.matches(QKeySequence.Cut):
+                    self.setTextCursor(c)
+                    self.cut() if e.matches(QKeySequence.Cut) else self.copy()
+                    if e.matches(QKeySequence.Copy):
+                        c.clearSelection()
+                        c.setPosition(p + 1)
+                        self.setTextCursor(c)
+                    return
+                if e.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+                    c.removeSelectedText()
+                    self.setTextCursor(c)
+                    return
         cur = self.textCursor()
         tbl = cur.currentTable()
         if tbl is not None and e.key() in (Qt.Key_Tab, Qt.Key_Backtab) and not (e.modifiers() & Qt.ControlModifier):
@@ -338,6 +362,290 @@ class Editor(QTextEdit):
                 win.zoom(1 if e.angleDelta().y() > 0 else -1)
             return
         super().wheelEvent(e)
+
+    # ---- ridimensionamento col mouse: immagini e tabelle ---------------
+    HANDLE = 9
+
+    def _offset(self):
+        return QPointF(self.horizontalScrollBar().value(), self.verticalScrollBar().value())
+
+    def _image_fmt(self, p):
+        doc = self.document()
+        if p < 0 or p >= doc.characterCount() - 1 or doc.characterAt(p) != OBJ:
+            return None
+        c = QTextCursor(doc)
+        c.setPosition(p)
+        c.setPosition(p + 1, QTextCursor.KeepAnchor)
+        f = c.charFormat()
+        return f.toImageFormat() if f.isImageFormat() else None
+
+    def image_rect(self, p):
+        """Rettangolo (coordinate della finestra) dell'immagine alla posizione p."""
+        f = self._image_fmt(p)
+        if f is None:
+            return None
+        doc = self.document()
+        block = doc.findBlock(p)
+        layout = block.layout()
+        rel = p - block.position()
+        line = layout.lineForTextPosition(rel)
+        if not line.isValid():
+            return None
+        w = f.width()
+        h = f.height()
+        if w <= 0 or h <= 0:
+            img = self.store.qimage(f.name())
+            w = w if w > 0 else img.width()
+            h = h if h > 0 else (img.height() * w / max(1, img.width()))
+        x = line.cursorToX(rel)
+        if isinstance(x, tuple):
+            x = x[0]
+        bbr = doc.documentLayout().blockBoundingRect(block)
+        top = bbr.top() + line.y() + line.ascent() - h
+        return QRectF(bbr.left() + x, top, w, h).translated(-self._offset())
+
+    def _selected_image_rect(self):
+        if self._img_sel is None:
+            return None
+        r = self.image_rect(self._img_sel.position())
+        if r is None:
+            self._img_sel = None
+        return r
+
+    def _handle_rect(self, r):
+        h = self.HANDLE
+        return QRectF(r.right() - h / 2, r.bottom() - h / 2, h, h)
+
+    def _tables(self):
+        out = []
+        it = self.document().rootFrame().begin()
+        while not it.atEnd():
+            fr = it.currentFrame()
+            if isinstance(fr, QTextTable):
+                out.append(fr)
+            it += 1
+        return out
+
+    def table_geometry(self, tbl):
+        """Bordi delle colonne di una tabella in coordinate della finestra."""
+        doc = self.document()
+        lay = doc.documentLayout()
+        off = self._offset()
+        fr = lay.frameBoundingRect(tbl).translated(-off)
+        tf = tbl.format()
+        pad = tf.cellPadding() + tf.border() / 2.0
+        n = tbl.columns()
+
+        def cell_rect(c):
+            for r in range(tbl.rows()):
+                cell = tbl.cellAt(r, c)
+                if cell.column() == c and cell.columnSpan() == 1:
+                    return lay.blockBoundingRect(cell.firstCursorPosition().block()).translated(-off)
+            return None
+
+        lefts = []
+        for c in range(n):
+            cr = cell_rect(c)
+            lefts.append(cr.left() - pad if cr is not None else None)
+        if lefts[0] is None:
+            lefts[0] = fr.left() + tf.margin()
+        for c in range(1, n):
+            if lefts[c] is None:
+                lefts[c] = lefts[c - 1] + 30
+        last = cell_rect(n - 1)
+        right = last.right() + pad if last is not None else fr.right() - tf.margin()
+        return {"left": lefts[0], "right": right, "top": fr.top() + tf.margin(), "bottom": fr.bottom() - tf.margin(),
+                "lefts": lefts}
+
+    def _page_width(self):
+        doc = self.document()
+        tw = doc.textWidth()
+        if tw <= 0:
+            tw = self.viewport().width()
+        return max(100.0, tw - 2 * doc.documentMargin())
+
+    def _table_hit(self, pt):
+        for tbl in self._tables():
+            g = self.table_geometry(tbl)
+            if not (g["top"] - 2 <= pt.y() <= g["bottom"] + 2):
+                continue
+            for c in range(1, len(g["lefts"])):
+                if abs(pt.x() - g["lefts"][c]) <= 4:
+                    return ("col", tbl, c, g)
+            if abs(pt.x() - g["right"]) <= 5:
+                return ("edge", tbl, None, g)
+        return None
+
+    def _col_px(self, g):
+        xs = g["lefts"] + [g["right"]]
+        return [max(1.0, xs[i + 1] - xs[i]) for i in range(len(g["lefts"]))]
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            pt = e.position()
+            r = self._selected_image_rect()
+            if r is not None and self._handle_rect(r).adjusted(-3, -3, 3, 3).contains(pt):
+                self._drag = {"type": "img", "start": pt, "rect": r, "w": r.width(), "h": r.height()}
+                return
+            hit = self._table_hit(pt)
+            if hit is not None:
+                kind, tbl, col, g = hit
+                self._drag = {"type": kind, "tbl": tbl, "col": col, "g": g, "start": pt,
+                              "px": self._col_px(g), "new": None}
+                return
+            ic = self.image_cursor_at(pt.toPoint())
+            if ic is not None:
+                p = ic.selectionStart()
+                ir = self.image_rect(p)
+                if ir is not None and ir.adjusted(-2, -2, 2, 2).contains(pt):
+                    self._img_sel = QTextCursor(self.document())
+                    self._img_sel.setPosition(p)
+                    after = QTextCursor(self.document())
+                    after.setPosition(p + 1)
+                    self.setTextCursor(after)
+                    self.setFocus()
+                    self.viewport().update()
+                    return
+            if self._img_sel is not None:
+                self._img_sel = None
+                self.viewport().update()
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        d = self._drag
+        pt = e.position()
+        if d is not None:
+            dx = pt.x() - d["start"].x()
+            if d["type"] == "img":
+                ratio = d["h"] / max(1.0, d["w"])
+                dy = pt.y() - d["start"].y()
+                delta = dx if (not ratio or abs(dx) >= abs(dy / ratio)) else dy / ratio
+                w = max(16.0, d["w"] + delta)
+                w = min(w, self._page_width())
+                d["new"] = (w, w * ratio)
+            elif d["type"] == "col":
+                px = list(d["px"])
+                c = d["col"]
+                minw = max(24.0, self._page_width() * 0.04)
+                dx = max(minw - px[c - 1], min(dx, px[c] - minw))
+                px[c - 1] += dx
+                px[c] -= dx
+                d["new"] = px
+            else:  # bordo destro: larghezza della tabella
+                px = d["px"]
+                tot = sum(px)
+                n = len(px)
+                minw = max(24.0, self._page_width() * 0.04) * n
+                new_tot = max(minw, min(self._page_width(), tot + dx))
+                d["new"] = [w * new_tot / tot for w in px]
+            self.viewport().update()
+            return
+        super().mouseMoveEvent(e)
+        if not e.buttons():
+            shape = None
+            r = self._selected_image_rect()
+            if r is not None and self._handle_rect(r).adjusted(-3, -3, 3, 3).contains(pt):
+                shape = Qt.SizeFDiagCursor
+            else:
+                hit = self._table_hit(pt)
+                if hit is not None:
+                    shape = Qt.SplitHCursor if hit[0] == "col" else Qt.SizeHorCursor
+            if shape is not None:
+                self.viewport().setCursor(shape)
+            elif self.viewport().cursor().shape() in (Qt.SizeFDiagCursor, Qt.SplitHCursor, Qt.SizeHorCursor):
+                self.viewport().setCursor(Qt.IBeamCursor)
+
+    def mouseReleaseEvent(self, e):
+        d = self._drag
+        if d is not None:
+            self._drag = None
+            if d.get("new"):
+                if d["type"] == "img":
+                    self.set_image_size(self._img_sel.position(), d["new"][0])
+                else:
+                    # percentuali riferite alla larghezza attuale della tabella (niente "salti")
+                    cur = table_widths(d["tbl"])
+                    total = sum(cur) if cur else 100.0
+                    old_px = sum(d["px"])
+                    self.set_table_widths(d["tbl"], [w / old_px * total for w in d["new"]])
+            self.viewport().update()
+            return
+        super().mouseReleaseEvent(e)
+
+    def set_image_size(self, p, width):
+        f = self._image_fmt(p)
+        if f is None:
+            return
+        img = self.store.qimage(f.name())
+        ratio = img.height() / max(1, img.width()) if not img.isNull() else (f.height() / max(1.0, f.width()))
+        f.setWidth(round(width))
+        f.setHeight(round(width) * ratio)
+        c = QTextCursor(self.document())
+        c.setPosition(p)
+        c.setPosition(p + 1, QTextCursor.KeepAnchor)
+        c.setCharFormat(f)
+
+    def set_table_widths(self, tbl, widths):
+        tf = apply_table_widths(tbl.format(), widths, tbl.columns())
+        tbl.setFormat(tf)
+
+    def table_px_widths_pct(self, tbl):
+        g = self.table_geometry(tbl)
+        page = self._page_width()
+        return [w * 100.0 / page for w in self._col_px(g)]
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        r = self._selected_image_rect()
+        d = self._drag
+        if r is None and d is None:
+            return
+        p = QPainter(self.viewport())
+        p.setRenderHint(QPainter.Antialiasing)
+        blue = QColor("#2f7dd1")
+        if r is not None:
+            pen = QPen(blue, 1, Qt.DashLine)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(r.adjusted(-1, -1, 1, 1))
+            p.setPen(QPen(QColor("#ffffff"), 1))
+            p.setBrush(blue)
+            p.drawRect(self._handle_rect(r))
+        if d is not None and d.get("new"):
+            p.setPen(QPen(blue, 2))
+            p.setBrush(Qt.NoBrush)
+            if d["type"] == "img":
+                w, h = d["new"]
+                nr = QRectF(d["rect"].left(), d["rect"].top(), w, h)
+                p.drawRect(nr)
+                self._label(p, nr.bottomRight() + QPointF(6, 0), f"{round(w)} × {round(h)}")
+            else:
+                g = d["g"]
+                xs = [g["left"]]
+                for w in d["new"]:
+                    xs.append(xs[-1] + w)
+                page = self._page_width()
+                for x in xs[1:]:
+                    p.drawLine(QPointF(x, g["top"]), QPointF(x, g["bottom"]))
+                if d["type"] == "col":
+                    c = d["col"]
+                    txt = f"{round(d['new'][c - 1] * 100 / page)}% | {round(d['new'][c] * 100 / page)}%"
+                    self._label(p, QPointF(xs[c] + 6, g["top"] + 2), txt)
+                else:
+                    self._label(p, QPointF(xs[-1] + 6, g["top"] + 2), f"tabella {round(sum(d['new']) * 100 / page)}%")
+        p.end()
+
+    def _label(self, p, pos, text):
+        fm = self.fontMetrics()
+        w = fm.horizontalAdvance(text) + 10
+        h = fm.height() + 4
+        x = min(pos.x(), self.viewport().width() - w - 2)
+        rect = QRectF(x, pos.y() - h / 2, w, h)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#2f7dd1"))
+        p.drawRoundedRect(rect, 3, 3)
+        p.setPen(QColor("#ffffff"))
+        p.drawText(rect, Qt.AlignCenter, text)
 
     # ---- immagini sotto il mouse --------------------------------------
     def image_cursor_at(self, pos):
@@ -821,6 +1129,12 @@ class MainWindow(QMainWindow):
         self.act(tm, "Elimina riga", lambda: self.table_op("del_row"))
         self.act(tm, "Elimina colonna", lambda: self.table_op("del_col"))
         self.act(tm, "Elimina tabella", lambda: self.table_op("del_table"))
+        tm.addSeparator()
+        wm = tm.addMenu("Larghezza tabella")
+        for pct in (25, 50, 75, 100):
+            self.act(wm, f"{pct}% della pagina", lambda pct=pct: self.table_op("width", pct))
+        self.act(tm, "Colonne di uguale larghezza", lambda: self.table_op("equal"))
+        self.act(tm, "Larghezza predefinita", lambda: self.table_op("reset"))
 
         m = mb.addMenu("&Visualizza")
         self.a_wrap = self.act(m, "A capo automatico", lambda: self.toggle_view("wrap"))
@@ -1046,6 +1360,8 @@ class MainWindow(QMainWindow):
         self.update_tab(t)
         if select:
             self.tabs.setCurrentWidget(t)
+        if t is self.tabs.currentWidget():
+            self.side.refresh_outline()
         self.update_title()
         self.update_status()
         return t
@@ -1367,12 +1683,23 @@ class MainWindow(QMainWindow):
         ed.setTextCursor(c)
         ed.setFocus()
 
-    def table_op(self, op):
+    def table_op(self, op, arg=None):
         ed = self.editor
         c = ed.textCursor()
         tbl = c.currentTable()
         if tbl is None:
             self.statusBar().showMessage("Metti il cursore dentro una tabella", 3000)
+            return
+        if op in ("width", "equal", "reset"):
+            n = tbl.columns()
+            cur = table_widths(tbl) or ed.table_px_widths_pct(tbl)
+            tot = sum(cur) or 100.0
+            if op == "width":
+                ed.set_table_widths(tbl, [w * arg / tot for w in cur])
+            elif op == "equal":
+                ed.set_table_widths(tbl, [tot / n] * n)
+            else:
+                ed.set_table_widths(tbl, None)
             return
         cell = tbl.cellAt(c)
         r, col = cell.row(), cell.column()

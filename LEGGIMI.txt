@@ -72,6 +72,15 @@ Tabelle e immagini
   Ctrl+T          inserisci tabella; Tab/Maiusc+Tab tra le celle; Ctrl+Invio riga sotto
   Tasto destro    su tabella: righe/colonne; su immagine: dimensione, salva, apri
 
+Ridimensionare con il mouse
+  Immagini: clic sull'immagine (compare la cornice tratteggiata), poi trascina il
+    quadratino blu in basso a destra. Le proporzioni restano giuste e vedi la misura.
+    Con l'immagine selezionata: Canc la elimina, Ctrl+C la copia.
+  Tabelle: porta il mouse su un bordo verticale tra due colonne e trascinalo per
+    allargare/stringere le colonne; il bordo destro cambia la larghezza della tabella.
+    Menu Tabella: larghezza 25/50/75/100%, colonne uguali, larghezza predefinita.
+  Tutto si annulla con Ctrl+Z e viene salvato nel file (.ftx e Word).
+
 Visualizza
   A capo automatico, mostra spazi e tabulazioni, evidenzia riga corrente,
   Font (unico per tutto), zoom con Ctrl+rotella o Ctrl +/-.
